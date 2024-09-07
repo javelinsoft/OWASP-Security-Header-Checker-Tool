@@ -48,7 +48,7 @@ def fetch_latest_headers():
 def check_headers(url):
     try:
         response = requests.get(url, timeout=5, allow_redirects=False)  # Do not follow redirects
-        return response.headers
+        return {k.lower().strip(): v for k, v in response.headers.items()}  # Convert header names to lowercase and strip whitespace
     except requests.RequestException:
         return {}
 
@@ -64,9 +64,9 @@ def crawl(url, crawl_time, headers):
     initial_results = []
 
     for header in headers:
-        header_name = header["name"]
+        header_name = header["name"].lower().strip()  # Convert to lowercase and strip whitespace
         status = "Missing" if header_name not in initial_headers else "OK"
-        initial_results.append((url, header_name, status))
+        initial_results.append((url, header["name"], status))  # Keep original case for display
 
     # Insert initial results into the treeview
     for header in initial_results:
@@ -113,22 +113,23 @@ def crawl(url, crawl_time, headers):
         # Only proceed if the headers were fetched successfully
         if crawled_headers:
             for header in headers:
-                header_name = header["name"]
+                header_name = header["name"].lower().strip()  # Convert to lowercase and strip whitespace
                 initial_status = "Missing" if header_name not in initial_headers else "OK"
                 crawled_status = "Missing" if header_name not in crawled_headers else "OK"
 
                 # Check if the header is missing but present in meta tags
-                if initial_status == "Missing" and header_name.lower() in meta_tags:
-                    crawled_status = f"Missing (in meta: {meta_tags[header_name.lower()]})"
+                if initial_status == "Missing" and header_name in meta_tags:
+                    crawled_status = f"Missing (in meta: {meta_tags[header_name]})"
 
                 # Only print if the status differs from the initial test
                 if initial_status != crawled_status:
-                    tree.insert("", "end", values=(full_url, header_name, crawled_status))
+                    tree.insert("", "end", values=(full_url, header["name"], crawled_status))  # Keep original case for display
 
         time.sleep(1)  # Simulate a delay for each request
 
     # Reset status label after crawling
     status_label.config(text="Crawling complete.")
+
 
 def update_status(full_url, remaining_time):
     status_label.config(text=f"Testing: {full_url} | Remaining Time: {remaining_time} seconds")
@@ -194,7 +195,7 @@ def copy_to_clipboard(text):
     pyperclip.copy(text)
 
 def show_context_menu(event):
-    """Show the context menu on right-click."""
+    """Show the context menu on right-click for the treeview."""
     try:
         # Get the selected item
         item = tree.selection()[0]
@@ -271,14 +272,26 @@ tree.heading("Header Name", text="Header Name", command=lambda: sort_treeview(1,
 tree.heading("Status", text="Status", command=lambda: sort_treeview(2, False))
 tree.grid(row=5, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
 
-# Create a context menu
+# Create a context menu for the treeview
 copy_url_menu = tk.Menu(root, tearoff=0)
 copy_url_menu.add_command(label="Copy URL")
 copy_url_menu.add_command(label="Copy Header Name")
 copy_url_menu.add_command(label="Copy Status")
 
-# Bind the right-click event to show the context menu
+# Bind the right-click event to show the context menu for the treeview
 tree.bind("<Button-3>", show_context_menu)
+
+# Create a context menu for the URL entry
+url_context_menu = tk.Menu(root, tearoff=0)
+url_context_menu.add_command(label="Copy", command=lambda: copy_to_clipboard(url_entry.get()))
+url_context_menu.add_command(label="Paste", command=lambda: url_entry.insert(tk.END, pyperclip.paste()))
+
+# Function to show the context menu for the URL entry
+def show_url_context_menu(event):
+    url_context_menu.post(event.x_root, event.y_root)
+
+# Bind the right-click event to show the context menu for the URL entry
+url_entry.bind("<Button-3>", show_url_context_menu)
 
 # Start the GUI event loop
 root.mainloop()
