@@ -31,7 +31,7 @@ fallback_headers = [
 custom_headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0",
     "Accept-Language": "en-US,en;q=0.5",
-    "Accept-Encoding": "gzip, deflate, br"
+    "Accept-Encoding": ""
 }
 
 # Function to fetch the latest OWASP headers from the JSON URL
@@ -115,7 +115,11 @@ def crawl(url, crawl_time, headers):
             break  # Stop if the crawl time is exceeded or stop event is set
 
         # Check headers for the crawled URL (allowing redirects)
-        crawled_headers = check_headers(full_url)
+        try:
+            crawled_response = requests.get(full_url, headers=custom_headers, timeout=5)  # Follow redirects
+            crawled_headers = {k.lower().strip(): v for k, v in crawled_response.headers.items()}
+        except requests.RequestException:
+            continue  # Skip if there's an error fetching the URL
 
         # Only proceed if the headers were fetched successfully
         if crawled_headers:
