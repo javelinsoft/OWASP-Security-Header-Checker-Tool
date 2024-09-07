@@ -27,6 +27,13 @@ fallback_headers = [
     {"name": "X-Permitted-Cross-Domain-Policies", "value": "none"}
 ]
 
+# Custom headers to use for requests
+custom_headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Accept-Encoding": "gzip, deflate, br"
+}
+
 # Function to fetch the latest OWASP headers from the JSON URL
 def fetch_latest_headers():
     try:
@@ -47,7 +54,7 @@ def fetch_latest_headers():
 # Function to check headers for a given URL without following redirects
 def check_headers(url):
     try:
-        response = requests.get(url, timeout=5, allow_redirects=False)  # Do not follow redirects
+        response = requests.get(url, headers=custom_headers, timeout=5, allow_redirects=False)  # Use custom headers
         return {k.lower().strip(): v for k, v in response.headers.items()}  # Convert header names to lowercase and strip whitespace
     except requests.RequestException:
         return {}
@@ -77,7 +84,7 @@ def crawl(url, crawl_time, headers):
 
     # Fetch the page content and find all links
     try:
-        response = requests.get(url, timeout=5)  # Allow redirects for the content fetch
+        response = requests.get(url, headers=custom_headers, timeout=5)  # Use custom headers
         soup = BeautifulSoup(response.content, 'lxml')
         links = {a['href'] for a in soup.find_all('a', href=True)}  # Extract unique links
     except requests.RequestException:
