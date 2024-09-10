@@ -7,7 +7,7 @@
 
 The OWASP Security Header Checker Tool is a user-friendly application designed to help developers and security professionals assess the security headers of web applications. This tool fetches and evaluates the HTTP response headers of a specified URL against a list of recommended security headers from OWASP (Open Web Application Security Project). By using this tool, users can identify missing security headers and enhance the security posture of their web applications. This tool utilizes the requests, BeautifulSoup, and Tkinter libraries for its functionality.  
 
-[Download Latest Version](https://github.com/javelinsoft/OWASP-Security-Header-Checker-Tool/releases/download/v1.0.0/Check.exe)
+[Download Latest Version](https://github.com/javelinsoft/OWASP-Security-Header-Checker-Tool/releases/download/v1.1.0/Check.zip)
 
 ## Features
 
