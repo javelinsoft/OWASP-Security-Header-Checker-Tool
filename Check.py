@@ -5,27 +5,12 @@ import threading
 import time
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
-import pyperclip  # Import pyperclip for clipboard functionality
-import os  # Import os to check for file existence
+import pyperclip
+import os
+import json
 
 # Event to control the crawling process
 stop_event = threading.Event()
-
-# Fallback headers if the latest headers cannot be fetched
-fallback_headers = [
-    {"name": "Cache-Control", "value": "no-store, max-age=0"},
-    {"name": "Clear-Site-Data", "value": "\"cache\",\"cookies\",\"storage\""},
-    {"name": "Content-Security-Policy", "value": "default-src 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'none'; upgrade-insecure-requests; block-all-mixed-content"},
-    {"name": "Cross-Origin-Embedder-Policy", "value": "require-corp"},
-    {"name": "Cross-Origin-Opener-Policy", "value": "same-origin"},
-    {"name": "Cross-Origin-Resource-Policy", "value": "same-origin"},
-    {"name": "Permissions-Policy", "value": "accelerometer=(), autoplay=(), camera=(), cross-origin-isolated=(), display-capture=(), encrypted-media=(), fullscreen=(), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(self), usb=(), web-share=(), xr-spatial-tracking=(), clipboard-read=(), clipboard-write=(), gamepad=(), hid=(), idle-detection=(), interest-cohort=(), serial=(), unload=()"},
-    {"name": "Referrer-Policy", "value": "no-referrer"},
-    {"name": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains"},
-    {"name": "X-Content-Type-Options", "value": "nosniff"},
-    {"name": "X-Frame-Options", "value": "deny"},
-    {"name": "X-Permitted-Cross-Domain-Policies", "value": "none"}
-]
 
 # Custom headers to use for requests
 custom_headers = {
@@ -34,171 +19,228 @@ custom_headers = {
     "Accept-Encoding": ""
 }
 
-# Function to fetch the latest OWASP headers from the JSON URL
-def fetch_latest_headers():
+
+def read_headers_to_remove_from_file():
+    """Read headers that need to be removed from the headers_remove.json file."""
     try:
-        response = requests.get("https://owasp.org/www-project-secure-headers/ci/headers_add.json", timeout=5)
-        response.raise_for_status()  # Raise an error for bad responses
-        data = response.json()
-        
-        # Check if the expected keys are in the response
-        if "headers" in data and "last_update_utc" in data:
-            return data["headers"], data["last_update_utc"]
-        else:
-            # If the structure is not as expected, return an empty list and None
-            return [], None
-    except requests.RequestException as e:
-        print(f"Error fetching headers: {e}")  # Log the error for debugging
+        with open("headers_remove.json", "r") as file:
+            data = json.load(file)
+            if "headers" in data and "last_update_utc" in data:
+                return data["headers"], data["last_update_utc"]
+            else:
+                return [], None
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Error reading headers to remove from file: {e}")
         return [], None
 
-# Function to check headers for a given URL without following redirects
-def check_headers(url):
+
+def read_headers_from_file():
+    """Read headers from the headers_add.json file."""
     try:
-        response = requests.get(url, headers=custom_headers, timeout=5, allow_redirects=False)  # Use custom headers
-        return {k.lower().strip(): v for k, v in response.headers.items()}  # Convert header names to lowercase and strip whitespace
+        with open("headers_add.json", "r") as file:
+            data = json.load(file)
+            if "headers" in data and "last_update_utc" in data:
+                return data["headers"], data["last_update_utc"]
+            else:
+                return [], None
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Error reading headers from file: {e}")
+        return [], None
+
+def check_headers(url):
+    """Check headers for a given URL without following redirects."""
+    try:
+        response = requests.get(url, headers=custom_headers, timeout=5, allow_redirects=False)
+        return {k.lower().strip(): v for k, v in response.headers.items()}
     except requests.RequestException:
         return {}
-
 def crawl(url, crawl_time, headers):
+    """Crawl the given URL and check headers."""
     start_time = time.time()
-    initial_headers = check_headers(url)
     
-    # Check if the initial headers were fetched successfully
+    # Read headers to remove
+    remove_headers, last_update_remove = read_headers_to_remove_from_file()
+    if remove_headers:
+        headers_label.config(text=f"Using headers to remove from: {last_update_remove}")
+
+    # Check headers and track time taken for the initial request
+    initial_request_start = time.time()
+    initial_headers = check_headers(url)
+    initial_request_duration = time.time() - initial_request_start
+
     if not initial_headers:
-        status_label.config(text=f"Could not fetch headers from {url}.")
+        update_status(f"Could not fetch headers from {url}.")
         return
+
+    # Check for duplicate headers in the initial response
+    duplicate_initial_headers = {}
+    for header in initial_headers:
+        header_name = header.lower().strip()
+        if header_name in duplicate_initial_headers:
+            duplicate_initial_headers[header_name] += 1
+        else:
+            duplicate_initial_headers[header_name] = 1
 
     initial_results = []
 
     for header in headers:
-        header_name = header["name"].lower().strip()  # Convert to lowercase and strip whitespace
-        status = "Missing" if header_name not in initial_headers else "OK"
-        initial_results.append((url, header["name"], status))  # Keep original case for display
+        header_name = header["name"].lower().strip()
+        if header_name not in initial_headers:
+            status = "Missing"
+            value = ""  # No value if header is missing
+        else:
+            # Check for duplicates
+            if duplicate_initial_headers[header_name] > 1:
+                status = f"Duplicate (Count: {duplicate_initial_headers[header_name]})"
+            else:
+                status = "Present"
+            value = initial_headers[header_name]  # Get the actual header value
+        
+        initial_results.append((url, header["name"], status, value))  # Include value here
 
-    # Insert initial results into the treeview
     for header in initial_results:
-        tree.insert("", "end", values=header)
+        # Use tags based on status
+        tag = "missing" if header[2] == "Missing" else "present" if "Duplicate" not in header[2] else "duplicate"
+        tree.insert("", "end", values=(header[0], header[1], header[2], header[3]), tags=(tag,))
 
-    # Add a separator line
-    tree.insert("", "end", values=("---------", "---------", "---------"))
+    # Check headers for removal
+    for header_name in remove_headers:
+        header_name_lower = header_name.lower().strip()
+        if header_name_lower in initial_headers:
+            value = initial_headers[header_name_lower]
+            tree.insert("", "end", values=(url, header_name, "Should be removed", value), tags=("remove",))
 
-    # Fetch the page content and find all links
+    tree.insert("", "end", values=("---------", "---------", "---------", "---------"))
+
     try:
-        response = requests.get(url, headers=custom_headers, timeout=5)  # Use custom headers
+        response = requests.get(url, headers=custom_headers, timeout=5)
         soup = BeautifulSoup(response.content, 'lxml')
-        links = {a['href'] for a in soup.find_all('a', href=True)}  # Extract unique links
+        links = {a['href'] for a in soup.find_all('a', href=True)}
     except requests.RequestException:
-        status_label.config(text=f"Could not fetch links from {url}.")
+        update_status(f"Could not fetch links from {url}.")
         return
 
-    # Get the base domain to limit crawling to the same domain
     base_domain = urlparse(url).netloc
 
-    # Check for meta tags
-    meta_tags = {meta.get('name', '').lower(): meta.get('content', '') for meta in soup.find_all('meta')}
+    # Calculate remaining time for crawling
+    remaining_time = crawl_time - initial_request_duration
+    if remaining_time <= 0:
+        update_status("Crawl time exceeded during initial request.")
+        return
 
-    # Crawl the found links and compare results
     for link in links:
-        # Construct the full URL
-        full_url = urljoin(url, link)  # This handles relative URLs correctly
+        full_url = urljoin(url, link)
 
-        # Check if the full URL is within the same domain
+        # Skip the main URL if found in the page
+        if full_url == url:
+            continue
+
         if urlparse(full_url).netloc != base_domain:
-            continue  # Skip URLs that are outside the scope
+            continue
 
-        remaining_time = crawl_time - (time.time() - start_time)
-
-        # Update status label
-        update_status(full_url, max(0, int(remaining_time)))
+        # Update remaining time after each link check
+        elapsed_time = time.time() - start_time
+        remaining_time = crawl_time - elapsed_time
+        update_status(f"Testing: {full_url} | Remaining Time: {max(0, int(remaining_time))} seconds")
 
         if remaining_time <= 0 or stop_event.is_set():
-            break  # Stop if the crawl time is exceeded or stop event is set
+            break
 
-        # Check headers for the crawled URL (allowing redirects)
         try:
-            crawled_response = requests.get(full_url, headers=custom_headers, timeout=5)  # Follow redirects
+            crawled_response = requests.get(full_url, headers=custom_headers, timeout=5)
             crawled_headers = {k.lower().strip(): v for k, v in crawled_response.headers.items()}
+            # Check for duplicate headers
+            duplicate_headers = {}
+            for header in crawled_response.headers:
+                header_name = header.lower().strip()
+                if header_name in duplicate_headers:
+                    duplicate_headers[header_name] += 1
+                else:
+                    duplicate_headers[header_name] = 1
         except requests.RequestException:
-            continue  # Skip if there's an error fetching the URL
+            continue
 
-        # Only proceed if the headers were fetched successfully
         if crawled_headers:
             for header in headers:
-                header_name = header["name"].lower().strip()  # Convert to lowercase and strip whitespace
-                initial_status = "Missing" if header_name not in initial_headers else "OK"
-                crawled_status = "Missing" if header_name not in crawled_headers else "OK"
+                header_name = header["name"].lower().strip()
+                initial_status = "Missing" if header_name not in initial_headers else "Present"
+                crawled_status = "Missing" if header_name not in crawled_headers else "Present"
 
-                # Check if the header is missing but present in meta tags
-                if initial_status == "Missing" and header_name in meta_tags:
-                    crawled_status = f"Missing (in meta: {meta_tags[header_name]})"
+                # Check for duplicates in crawled headers
+                if header_name in duplicate_headers and duplicate_headers[header_name] > 1:
+                    crawled_status = f"Duplicate (Count: {duplicate_headers[header_name]})"
 
-                # Only print if the status differs from the initial test
-                if initial_status != crawled_status:
-                    tree.insert("", "end", values=(full_url, header["name"], crawled_status))  # Keep original case for display
+                # Update crawled status if it was missing in the initial request
+                if initial_status == "Missing" and crawled_status == "Present":
+                    crawled_status = f"Present (Was missing in main URL)"
+                # Update crawled status if it was present in the initial request
+                elif initial_status == "Present" and crawled_status == "Missing":
+                    crawled_status = f"Missing (Was present in main URL)"
 
-        time.sleep(1)  # Simulate a delay for each request
+                # Use tags based on status
+                tag = "missing" if crawled_status.startswith("Missing") else "present" if "Duplicate" not in crawled_status else "duplicate"
+                value = crawled_headers.get(header_name, "")  # Get the actual header value or ""
+                tree.insert("", "end", values=(full_url, header["name"], crawled_status, value), tags=(tag,))
 
-    # Reset status label after crawling
-    status_label.config(text="Crawling complete.")
+        time.sleep(1)
+
+    update_status("Crawling complete.")
 
 
-def update_status(full_url, remaining_time):
-    status_label.config(text=f"Testing: {full_url} | Remaining Time: {remaining_time} seconds")
+
+def update_status(message):
+    """Update the status label."""
+    status_label.config(text=message)
+
+def start_crawl(url, crawl_time):
+    """Start the crawling process in a separate thread."""
+    headers, last_update = read_headers_from_file()
+    if not headers:
+        update_status("Could not fetch the latest headers. No headers available.")
+        return
+
+    headers_label.config(text=f"Using headers from: {last_update}")
+
+    # Start the crawling thread
+    threading.Thread(target=crawl, args=(url, crawl_time, headers)).start()
 
 def on_check():
-    url = url_entry.get().strip()  # Get the URL and strip any leading/trailing whitespace
+    """Handle the Check Headers button click."""
+    url = url_entry.get().strip()
     try:
         crawl_time = int(time_entry.get())
     except ValueError:
-        status_label.config(text="Please enter a valid number for crawl time.")
+        update_status("Please enter a valid number for crawl time.")
         return
 
     if not url:
-        status_label.config(text="Please enter a URL.")
+        update_status("Please enter a URL.")
         return
 
-    # Check if the URL starts with http:// or https://
     if not url.startswith(("http://", "https://")):
-        url = "https://" + url  # Default to https
-        status_label.config(text=f"Protocol not specified. Defaulting to: {url}")
+        url = "https://" + url
+        update_status(f"Protocol not specified. Defaulting to: {url}")
 
-    # Clear previous results
     for row in tree.get_children():
         tree.delete(row)
 
-    # Reset the stop event
     stop_event.clear()
 
-    # Fetch the latest headers
-    headers, last_update = fetch_latest_headers()
-    if not headers:
-        # If fetching headers fails, use fallback headers
-        status_label.config(text="Could not fetch the latest headers. Using fallback headers.")
-        headers = fallback_headers
-        last_update = "Fallback headers in use."
-
-    # Update the headers label with the last update date only
-    headers_label.config(text=f"Using headers from: {last_update}")
-
-    # Start crawling in a separate thread
-    threading.Thread(target=crawl, args=(url, crawl_time, headers)).start()
+    # Start the header fetching in a separate thread
+    threading.Thread(target=start_crawl, args=(url, crawl_time)).start()
 
 def on_stop():
-    stop_event.set()  # Signal the crawling thread to stop
+    """Handle the Stop Check button click."""
+    stop_event.set()
 
 def sort_treeview(column, reverse):
     """Sort the treeview based on the selected column."""
-    # Get the data from the treeview
     data = [(tree.item(item)["values"], item) for item in tree.get_children()]
-    
-    # Sort the data
     data.sort(key=lambda x: x[0][column], reverse=reverse)
 
-    # Reinsert the sorted data into the treeview
     for index, (values, item) in enumerate(data):
         tree.move(item, '', index)
 
-    # Toggle the sort order for the next click
     tree.heading(column, command=lambda: sort_treeview(column, not reverse))
 
 def copy_to_clipboard(text):
@@ -208,100 +250,92 @@ def copy_to_clipboard(text):
 def show_context_menu(event):
     """Show the context menu on right-click for the treeview."""
     try:
-        # Get the selected item
         item = tree.selection()[0]
         values = tree.item(item, "values")
         
-        # Update the context menu options
-        copy_url_menu.entryconfig(0, command=lambda: copy_to_clipboard(values[0]))  # Copy URL
-        copy_url_menu.entryconfig(1, command=lambda: copy_to_clipboard(values[1]))  # Copy Header Name
-        copy_url_menu.entryconfig(2, command=lambda: copy_to_clipboard(values[2]))  # Copy Status
+        copy_url_menu.entryconfig(0, command=lambda: copy_to_clipboard(values[0]))
+        copy_url_menu.entryconfig(1, command=lambda: copy_to_clipboard(values[1]))
+        copy_url_menu.entryconfig(2, command=lambda: copy_to_clipboard(values[2]))
+        copy_url_menu.entryconfig(3, command=lambda: copy_to_clipboard(values[3]))  # Copy Value
         
-        # Display the context menu
         copy_url_menu.post(event.x_root, event.y_root)
     except IndexError:
-        pass  # No item selected
+        pass
 
 # Create the main window
 root = tk.Tk()
 root.title("OWASP Security Header Checker")
-root.geometry("800x600")  # Set a modern window size
+root.geometry("800x600")
 
-# Check if icon.ico exists and set it as the window icon
 icon_path = os.path.abspath("icon.ico")
 if os.path.isfile(icon_path):
     try:
-        root.iconbitmap(icon_path)  # Try to set the icon using iconbitmap
+        root.iconbitmap(icon_path)
     except tk.TclError:
         print("Failed to set icon using iconbitmap. Trying iconphoto instead.")
         try:
-            icon_image = tk.PhotoImage(file=icon_path)  # Use PhotoImage for PNG or GIF
+            icon_image = tk.PhotoImage(file=icon_path)
             root.iconphoto(False, icon_image)
         except Exception as e:
             print(f"Failed to set icon using iconphoto: {e}")
 
-# Configure grid weights for resizing
-root.grid_rowconfigure(5, weight=1)  # Make the treeview row expandable
-root.grid_columnconfigure(1, weight=1)  # Make the second column expandable
+root.grid_rowconfigure(5, weight=1)
+root.grid_columnconfigure(1, weight=1)
 
-# URL input
 tk.Label(root, text="URL:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
 url_entry = tk.Entry(root, width=50)
 url_entry.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
 
-# Crawl Time input
 tk.Label(root, text="Crawl Time (Seconds):").grid(row=1, column=0, padx=10, pady=10, sticky="w")
 time_entry = tk.Entry(root)
-time_entry.insert(0, "30")  # Default time
+time_entry.insert(0, "30")
 time_entry.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
 
-# Button frame for modern layout
 button_frame = ttk.Frame(root)
 button_frame.grid(row=2, column=0, columnspan=2, pady=10)
 
-# Check button
 check_button = ttk.Button(button_frame, text="Check Headers", command=on_check)
 check_button.pack(side=tk.LEFT, padx=5)
 
-# Stop button
 stop_button = ttk.Button(button_frame, text="Stop Check", command=on_stop)
 stop_button.pack(side=tk.LEFT, padx=5)
 
-# Status label
 status_label = tk.Label(root, text="")
 status_label.grid(row=3, column=0, columnspan=2, pady=10)
 
-# Headers label for displaying the last update date only
 headers_label = tk.Label(root, text="")
 headers_label.grid(row=4, column=0, columnspan=2, pady=10)
 
-# Treeview for displaying results
-columns = ("Tested URL", "Header Name", "Status")
+columns = ("Tested URL", "Header Name", "Status", "Value")  # Add "Value" to the columns
 tree = ttk.Treeview(root, columns=columns, show="headings")
 tree.heading("Tested URL", text="Tested URL", command=lambda: sort_treeview(0, False))
 tree.heading("Header Name", text="Header Name", command=lambda: sort_treeview(1, False))
 tree.heading("Status", text="Status", command=lambda: sort_treeview(2, False))
+tree.heading("Value", text="Value", command=lambda: sort_treeview(3, False))  # Add header for "Value"
+
+# Define tags for colors
+tree.tag_configure("missing", foreground="red")
+tree.tag_configure("present", foreground="green")
+tree.tag_configure("duplicate", foreground="orange")  # New tag for duplicates
+tree.tag_configure("remove", foreground="purple")
+
 tree.grid(row=5, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
 
-# Create a context menu for the treeview
 copy_url_menu = tk.Menu(root, tearoff=0)
 copy_url_menu.add_command(label="Copy URL")
 copy_url_menu.add_command(label="Copy Header Name")
 copy_url_menu.add_command(label="Copy Status")
+copy_url_menu.add_command(label="Copy Value")  # Add option to copy Value
 
-# Bind the right-click event to show the context menu for the treeview
 tree.bind("<Button-3>", show_context_menu)
 
-# Create a context menu for the URL entry
 url_context_menu = tk.Menu(root, tearoff=0)
 url_context_menu.add_command(label="Copy", command=lambda: copy_to_clipboard(url_entry.get()))
 url_context_menu.add_command(label="Paste", command=lambda: url_entry.insert(tk.END, pyperclip.paste()))
 
-# Function to show the context menu for the URL entry
 def show_url_context_menu(event):
     url_context_menu.post(event.x_root, event.y_root)
 
-# Bind the right-click event to show the context menu for the URL entry
 url_entry.bind("<Button-3>", show_url_context_menu)
 
 # Start the GUI event loop
