@@ -11,7 +11,6 @@ The OWASP Security Header Checker Tool is a user-friendly application designed t
 
 ## Features
 
-* Fetch Latest OWASP Headers: Automatically retrieves the latest recommended security headers from the OWASP website.  
 * Crawl Links: Checks the headers of links found on the specified webpage, ensuring comprehensive coverage.  
 * User-Friendly Interface: Built with Tkinter, the tool provides an intuitive GUI for easy interaction.  
 * Clipboard Functionality: Easily copy URLs, header names, and statuses to the clipboard for convenience.  
