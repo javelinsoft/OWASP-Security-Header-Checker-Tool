@@ -29,9 +29,10 @@ The OWASP Security Header Checker Tool is a user-friendly application designed t
 * Click the "Check Headers" button to start the process.  
 * Review the results displayed in the table, which shows the tested URL, header names, and their statuses.  
 * Use the right-click context menu to copy information to your clipboard as needed.  
-* Click the "Stop Check" button to halt the process at any time.  
+* Click the "Stop Check" button to halt the process at any time.
+Note: This tool currently only checks for the presence of headers and not for misconfigured headers.
 
 ## Contributing
 
-Contributions are welcome! If you have suggestions for improvements or new features, please open an issue or submit a pull request.
+Contributions are welcome! If you have suggestions for improvements or new features, please open an issue or submit a pull request. 
 
